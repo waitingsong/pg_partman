@@ -126,9 +126,8 @@ FOREACH v_id IN ARRAY p_partition_ids LOOP
         v_step_id := add_step(v_job_id, 'Creating new partition '||v_partition_name||' with interval from '||v_id||' to '||(v_id + v_partition_interval)-1);
     END IF;
 
-    -- Close parentheses on LIKE are below due to differing requirements of subpartitioning
     -- Same INCLUDING list is used in create_parent()
-    v_sql := format('CREATE TABLE %I.%I (LIKE %I.%I INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING STORAGE INCLUDING COMMENTS INCLUDING GENERATED) '
+    v_sql := format('CREATE TABLE %I.%I (LIKE %I.%I  INCLUDING COMMENTS INCLUDING COMPRESSION INCLUDING CONSTRAINTS INCLUDING DEFAULTS INCLUDING GENERATED INCLUDING STATISTICS INCLUDING STORAGE) '
             , v_parent_schema
             , v_partition_name
             , v_parent_schema

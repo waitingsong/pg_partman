@@ -610,7 +610,7 @@ IF p_default_table THEN
     */
 
     -- Same INCLUDING list is used in create_partition_*(). INDEXES is handled when partition is attached if it's supported.
-    v_sql := v_sql || format(' TABLE %I.%I (LIKE %I.%I INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING STORAGE INCLUDING COMMENTS INCLUDING GENERATED)'
+    v_sql := v_sql || format(' TABLE %I.%I (LIKE %I.%I INCLUDING COMMENTS INCLUDING COMPRESSION INCLUDING CONSTRAINTS INCLUDING DEFAULTS INCLUDING GENERATED INCLUDING STATISTICS INCLUDING STORAGE)'
         , v_parent_schema, v_default_partition, v_parent_schema, v_parent_tablename);
     IF v_parent_tablespace IS NOT NULL THEN
         v_sql := format('%s TABLESPACE %I ', v_sql, v_parent_tablespace);

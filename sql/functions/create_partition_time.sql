@@ -186,7 +186,7 @@ FOREACH v_time IN ARRAY p_partition_times LOOP
     */
 
     -- Same INCLUDING list is used in create_parent()
-    v_sql := v_sql || format(' TABLE %I.%I (LIKE %I.%I INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING STORAGE INCLUDING COMMENTS INCLUDING GENERATED) '
+    v_sql := v_sql || format(' TABLE %I.%I (LIKE %I.%I INCLUDING COMMENTS INCLUDING COMPRESSION INCLUDING CONSTRAINTS INCLUDING DEFAULTS INCLUDING GENERATED INCLUDING STATISTICS INCLUDING STORAGE) '
                                 , v_parent_schema
                                 , v_partition_name
                                 , v_parent_schema

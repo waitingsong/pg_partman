@@ -1,5 +1,6 @@
 -- TODO - add test for PR#650 - not creating partitions that aren't being retained anyway
 --      - add test to ensure sub partitioning preserves default table settings and not null enforcement
+--      - add test for constraint exclusion with integer-based partitioning
 
 -- TODO PRESERVE PRIVILEGES
 DROP FUNCTION @extschema@.create_parent(text, text, text, text, text, int, text, boolean, text, text[], text, boolean, text);
@@ -2383,7 +2384,7 @@ IF p_default_table THEN
     */
 
     -- Same INCLUDING list is used in create_partition_*(). INDEXES is handled when partition is attached if it's supported.
-    v_sql := v_sql || format(' TABLE %I.%I (LIKE %I.%I INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING STORAGE INCLUDING COMMENTS INCLUDING GENERATED)'
+    v_sql := v_sql || format(' TABLE %I.%I (LIKE %I.%I INCLUDING COMMENTS INCLUDING COMPRESSION INCLUDING CONSTRAINTS INCLUDING DEFAULTS INCLUDING GENERATED INCLUDING STATISTICS INCLUDING STORAGE)'
         , v_parent_schema, v_default_partition, v_parent_schema, v_parent_tablename);
     IF v_parent_tablespace IS NOT NULL THEN
         v_sql := format('%s TABLESPACE %I ', v_sql, v_parent_tablespace);
@@ -2794,9 +2795,8 @@ FOREACH v_id IN ARRAY p_partition_ids LOOP
         v_step_id := add_step(v_job_id, 'Creating new partition '||v_partition_name||' with interval from '||v_id||' to '||(v_id + v_partition_interval)-1);
     END IF;
 
-    -- Close parentheses on LIKE are below due to differing requirements of subpartitioning
     -- Same INCLUDING list is used in create_parent()
-    v_sql := format('CREATE TABLE %I.%I (LIKE %I.%I INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING STORAGE INCLUDING COMMENTS INCLUDING GENERATED) '
+    v_sql := format('CREATE TABLE %I.%I (LIKE %I.%I  INCLUDING COMMENTS INCLUDING COMPRESSION INCLUDING CONSTRAINTS INCLUDING DEFAULTS INCLUDING GENERATED INCLUDING STATISTICS INCLUDING STORAGE) '
             , v_parent_schema
             , v_partition_name
             , v_parent_schema
@@ -3171,7 +3171,7 @@ FOREACH v_time IN ARRAY p_partition_times LOOP
     */
 
     -- Same INCLUDING list is used in create_parent()
-    v_sql := v_sql || format(' TABLE %I.%I (LIKE %I.%I INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING STORAGE INCLUDING COMMENTS INCLUDING GENERATED) '
+    v_sql := v_sql || format(' TABLE %I.%I (LIKE %I.%I INCLUDING COMMENTS INCLUDING COMPRESSION INCLUDING CONSTRAINTS INCLUDING DEFAULTS INCLUDING GENERATED INCLUDING STATISTICS INCLUDING STORAGE) '
                                 , v_parent_schema
                                 , v_partition_name
                                 , v_parent_schema

@@ -80,7 +80,7 @@ E'SELECT partman.create_parent(
 	p_template_table := ''partman.template_partman_test_declarative_objects'',
 	p_jobmon := ''t'',
 	p_date_trunc_interval := NULL,
-    p_control_not_null := ''t''
+	p_control_not_null := ''t''
 );
 UPDATE partman.part_config SET
 	optimize_constraint = 30,

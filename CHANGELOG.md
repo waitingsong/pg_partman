@@ -9,6 +9,7 @@ NEW FEATURES
  - Do not create partitions during a maintenance run that aren't going to be kept as part of retention anyway. (Github Issue #649)
  - Removed `default_table` column from `part_config` table. It's only necessary in `part_config_sub` to determine whether future sub-partition parents should have defaults made. Adjusted other code to look up whether a default table actually exists to determine its behavior. (Github Issue #637)
  - Allow the control column to be NULL. This is not advised without very careful review and an explicit use-case defined as it can cause unexpected behavior or excessive data in the DEFAULT child partition. A new flag `p_control_not_null` has been added to the `create_parent()` and `create_sub_parent()` functions.
+- Include the following additional parent table properties on newly created child tables: COMPRESSION, STORAGE, and STATISTICS. Note this is only for newly created child tables. Existing child tables will have to be updated manually. (Github Issue #683)
 
 BUG FIXES
 ---------
