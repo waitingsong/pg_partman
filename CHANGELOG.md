@@ -14,10 +14,10 @@ NEW FEATURES
 BUG FIXES
 ---------
  - Enforcement of the control column being NOT NULL was not being done as intended. This has been fixed. If you'd like to allow the control column to be NULL, see the new feature flag in 5.2.0
+ - Fixed handling of bigint data type with LIST partitioning. New partitions were not being created during maintenance and `show_*` functions were not giving expected results. (Github Issue #704)
  - Fixed `reapply_constraint_proc()` to work properly when there are no relevant child tables to place additional constraints. In the process reworked the logic to determine the target child tables for both that procedure and the apply_constraints() function. The determining factor is now always the newest child table that contains data (other than the default). Updated documentation to clarify how the optimize_constraint flag works. (Github Issue #694)
  - Properly handle partial indexes that are inherited from the template table. (Github Issue #657)
  - Move the retention logic for dropping tables later in the maintenance process to help avoid longer running heavy locks on partition sets. (Github Issue #678)
-
 
 5.1.0
 =====

@@ -411,7 +411,7 @@ IF v_partstrat = 'r' THEN
     AND n.nspname = v_child_schema;
 ELSIF v_partstrat = 'l' THEN
     SELECT (regexp_match(pg_get_expr(c.relpartbound, c.oid, true)
-        , $REGEX$FOR VALUES IN \(([^)])\)$REGEX$))[1]::text
+        , $REGEX$FOR VALUES IN \(([^)]+)\)$REGEX$))[1]::text
     INTO v_start_string
     FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
@@ -450,10 +450,11 @@ IF v_control_type = 'time' OR (v_control_type = 'id' AND v_epoch <> 'none') THEN
 ELSIF v_control_type = 'id' THEN
 
     IF v_exact_control_type IN ('int8', 'int4', 'int2') THEN
-        child_start_id := trim(BOTH '''' FROM v_start_string)::bigint;
+        -- Have to do a trim here because of inconsistency in quoting different integer types. Ex: bigint boundary values are quoted but int values are not
+        child_start_id := trim(BOTH $QUOTE$''$QUOTE$ FROM v_start_string)::bigint;
     ELSIF v_exact_control_type = 'numeric' THEN
         -- cast to numeric then trunc to get rid of decimal without rounding
-        child_start_id := trunc(trim(BOTH '''' FROM v_start_string)::numeric)::bigint;
+        child_start_id := trunc(trim(BOTH $QUOTE$''$QUOTE$ FROM v_start_string)::numeric)::bigint;
     END IF;
 
     child_end_id := (child_start_id + v_partition_interval::bigint) - 1;
@@ -584,13 +585,13 @@ ELSIF v_control_type = 'id' AND v_epoch <> 'none' THEN
 ELSIF v_control_type = 'id' THEN
 
     IF v_partition_type = 'range' THEN
-        -- Have to do a trim here because of inconsistency in quoting different integer types. Ex: bigint boundary values are quoted but int values are not
+        -- Have to do trims here because of inconsistency in quoting different integer types. Ex: bigint boundary values are quoted but int values are not
         v_sql := v_sql || format('
             ORDER BY trim( BOTH $QUOTE$''$QUOTE$ from (regexp_match(pg_get_expr(c.relpartbound, c.oid, true), $REGEX$\(([^)]+)\) TO \(([^)]+)\)$REGEX$))[1]::text )::%s %s '
             , v_exact_control_type, p_order);
     ELSIF v_partition_type = 'list' THEN
         v_sql := v_sql || format('
-            ORDER BY trim((regexp_match(pg_get_expr(c.relpartbound, c.oid, true), $REGEX$FOR VALUES IN \(([^)])\)$REGEX$))[1])::%s %s '
+            ORDER BY trim( BOTH $QUOTES$''$QUOTES$ from (regexp_match(pg_get_expr(c.relpartbound, c.oid, true), $REGEX$FOR VALUES IN \(([^)]+)\)$REGEX$))[1])::%s %s '
             , v_exact_control_type , p_order);
     ELSE
         RAISE EXCEPTION 'show_partitions: Unsupported partition type found: %', v_partition_type;

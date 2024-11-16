@@ -114,13 +114,13 @@ ELSIF v_control_type = 'id' AND v_epoch <> 'none' THEN
 ELSIF v_control_type = 'id' THEN
 
     IF v_partition_type = 'range' THEN
-        -- Have to do a trim here because of inconsistency in quoting different integer types. Ex: bigint boundary values are quoted but int values are not
+        -- Have to do trims here because of inconsistency in quoting different integer types. Ex: bigint boundary values are quoted but int values are not
         v_sql := v_sql || format('
             ORDER BY trim( BOTH $QUOTE$''$QUOTE$ from (regexp_match(pg_get_expr(c.relpartbound, c.oid, true), $REGEX$\(([^)]+)\) TO \(([^)]+)\)$REGEX$))[1]::text )::%s %s '
             , v_exact_control_type, p_order);
     ELSIF v_partition_type = 'list' THEN
         v_sql := v_sql || format('
-            ORDER BY trim((regexp_match(pg_get_expr(c.relpartbound, c.oid, true), $REGEX$FOR VALUES IN \(([^)])\)$REGEX$))[1])::%s %s '
+            ORDER BY trim( BOTH $QUOTES$''$QUOTES$ from (regexp_match(pg_get_expr(c.relpartbound, c.oid, true), $REGEX$FOR VALUES IN \(([^)]+)\)$REGEX$))[1])::%s %s '
             , v_exact_control_type , p_order);
     ELSE
         RAISE EXCEPTION 'show_partitions: Unsupported partition type found: %', v_partition_type;
