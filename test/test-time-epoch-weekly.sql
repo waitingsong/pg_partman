@@ -104,9 +104,9 @@ SELECT has_table('partman_test', 'time_taptest_table_p'||to_char(date_trunc('wee
 SELECT hasnt_table('partman_test', 'time_taptest_table_p'||to_char(date_trunc('week',CURRENT_TIMESTAMP)+'6 weeks'::interval, 'YYYYMMDD'),
     'Check time_taptest_table_'||to_char(date_trunc('week',CURRENT_TIMESTAMP)+'6 weeks'::interval, 'YYYYMMDD')||' does not exist (+6 weeks)');
 
--- With an optimize_constraint value of 5, the automatic run of apply_constraints due to run_maintenance will put constraint on the child table that is 5 weeks behind the newest data (data two weeks ahead inserted above, so 3 weeks behind now())
-SELECT col_has_check('partman_test', 'time_taptest_table_p'||to_char(date_trunc('week',CURRENT_TIMESTAMP)-'3 weeks'::interval, 'YYYYMMDD'), 'col1'
-    , 'Check for additional constraint on col1 on time_taptest_table_p'||to_char(date_trunc('week',CURRENT_TIMESTAMP)-'3 weeks'::interval, 'YYYYMMDD')||' (-3 weeks)');
+-- With an optimize_constraint value of 5, the automatic run of apply_constraints due to run_maintenance will put constraint on the child table that is 6 weeks behind the newest data (data two weeks ahead inserted above, so 4 weeks behind now())
+SELECT col_has_check('partman_test', 'time_taptest_table_p'||to_char(date_trunc('week',CURRENT_TIMESTAMP)-'4 weeks'::interval, 'YYYYMMDD'), 'col1'
+    , 'Check for additional constraint on col1 on time_taptest_table_p'||to_char(date_trunc('week',CURRENT_TIMESTAMP)-'4 weeks'::interval, 'YYYYMMDD')||' (-4 weeks)');
 
 
 INSERT INTO partman_test.time_taptest_table (col1, col3) VALUES (generate_series(111,120), extract('epoch' from date_trunc('week',CURRENT_TIMESTAMP) + '3 weeks'::interval)::int);
@@ -123,8 +123,8 @@ SELECT is_empty('SELECT * FROM ONLY partman_test.time_taptest_table_default', 'C
 SELECT results_eq('SELECT count(*)::int FROM partman_test.time_taptest_table', ARRAY[130], 'Check count from parent table');
 SELECT results_eq('SELECT count(*)::int FROM partman_test.time_taptest_table_p'||to_char(date_trunc('week',CURRENT_TIMESTAMP)+'4 weeks'::interval, 'YYYYMMDD'),
     ARRAY[10], 'Check count from time_taptest_table_p'||to_char(date_trunc('week',CURRENT_TIMESTAMP)+'4 weeks'::interval, 'YYYYMMDD')||' (+4 weeks)');
-SELECT col_has_check('partman_test', 'time_taptest_table_p'||to_char(date_trunc('week',CURRENT_TIMESTAMP)-'2 weeks'::interval, 'YYYYMMDD'), 'col1'
-    , 'Check for additional constraint on col1 on time_taptest_table_p'||to_char(date_trunc('week',CURRENT_TIMESTAMP)-'2 weeks'::interval, 'YYYYMMDD')||' (-2 weeks)');
+SELECT col_has_check('partman_test', 'time_taptest_table_p'||to_char(date_trunc('week',CURRENT_TIMESTAMP)-'3 weeks'::interval, 'YYYYMMDD'), 'col1'
+    , 'Check for additional constraint on col1 on time_taptest_table_p'||to_char(date_trunc('week',CURRENT_TIMESTAMP)-'3 weeks'::interval, 'YYYYMMDD')||' (-3 weeks)');
 
 SELECT has_table('partman_test', 'time_taptest_table_p'||to_char(date_trunc('week',CURRENT_TIMESTAMP)+'4 weeks'::interval, 'YYYYMMDD'),
     'Check time_taptest_table_'||to_char(date_trunc('week',CURRENT_TIMESTAMP)+'4 weeks'::interval, 'YYYYMMDD')||' exists (+4 weeks)');
