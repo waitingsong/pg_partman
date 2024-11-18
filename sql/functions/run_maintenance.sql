@@ -254,8 +254,14 @@ LOOP
         RAISE DEBUG 'run_maint: v_current_partition_timestamp: %, v_max_time_default: %', v_current_partition_timestamp, v_max_time_default;
         IF v_current_partition_timestamp IS NULL AND v_max_time_default IS NULL THEN
             -- Partition set is completely empty and infinite time partitions not set
-            -- Nothing to do
+
+            -- Still need to run retention if needed. Note similar call below for non-empty sets. Keep in sync.
+            IF v_row.retention IS NOT NULL THEN
+                v_drop_count := v_drop_count + @extschema@.drop_partition_time(v_row.parent_table);
+            END IF;
+
             UPDATE @extschema@.part_config SET maintenance_last_run = clock_timestamp() WHERE parent_table = v_row.parent_table;
+            -- Nothing else to do
             CONTINUE;
         END IF;
         RAISE DEBUG 'run_maint: v_child_timestamp: %, v_current_partition_timestamp: %, v_max_time_default: %', v_child_timestamp, v_current_partition_timestamp, v_max_time_default;
@@ -314,7 +320,7 @@ LOOP
             v_premade_count = round(EXTRACT('epoch' FROM age(v_next_partition_timestamp, v_current_partition_timestamp)) / EXTRACT('epoch' FROM v_row.partition_interval::interval));
         END LOOP;
 
-        -- Run retention if needed
+        -- Run retention if needed. Note similar call above when partition set is empty. Keep in sync.
         IF v_row.retention IS NOT NULL THEN
             v_drop_count := v_drop_count + @extschema@.drop_partition_time(v_row.parent_table);
         END IF;

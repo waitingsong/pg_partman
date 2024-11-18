@@ -156,7 +156,7 @@ LOOP
      SELECT child_start_time INTO v_partition_timestamp FROM @extschema@.show_partition_info(v_row.partition_schemaname||'.'||v_row.partition_tablename
         , v_partition_interval::text
         , p_parent_table);
-    -- Add one interval since partition names contain the start of the constraint period
+    -- Add one interval since partition lower boundary is the start of the constraint period
     IF (v_partition_timestamp + v_partition_interval) < (p_reference_timestamp - v_retention) THEN
 
         -- Do not allow final partition to be dropped if it is not a sub-partition parent
