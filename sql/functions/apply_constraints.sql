@@ -118,26 +118,24 @@ IF p_child_table IS NULL THEN
     END IF;
 
     -- Loop through child tables starting from highest to get a value from the highest non-empty partition in the set
-    -- Once a child table with a value is found, go back <optimize_constraint> children to make the constraint on that child
+    -- Once a child table with a value is found, go back <optimize_constraint> + 1 children to make the constraint on that child
     FOR v_row_max_value IN
         SELECT partition_schemaname, partition_tablename FROM @extschema@.show_partitions(p_parent_table, 'DESC', false)
     LOOP
         IF v_child_value IS NULL THEN
-            EXECUTE format('SELECT %L::text FROM %I.%I LIMIT 1'
+            EXECUTE format('SELECT %I::text FROM %I.%I LIMIT 1'
                                 , v_control
                                 , v_row_max_value.partition_schemaname
                                 , v_row_max_value.partition_tablename
                             ) INTO v_child_value;
-
         ELSE
             v_optimize_counter := v_optimize_counter + 1;
-            IF v_optimize_counter = v_optimize_constraint THEN
+            IF v_optimize_counter > v_optimize_constraint THEN
                 v_child_tablename = v_row_max_value.partition_tablename;
                 EXIT;
             END IF;
         END IF;
     END LOOP;
-
     RAISE DEBUG 'apply_constraint: v_parent_tablename: %, v_last_partition: %, v_child_tablename: %, v_optimize_counter: %'
                 , v_parent_tablename, v_last_partition, v_child_tablename, v_optimize_counter;
 
