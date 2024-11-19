@@ -111,6 +111,7 @@ v_tables_list_sql := 'SELECT parent_table
                 , ignore_default_data
                 , datetime_string
                 , maintenance_order
+                , date_trunc_interval
             FROM @extschema@.part_config
             WHERE undo_in_progress = false';
 
@@ -207,8 +208,14 @@ LOOP
         SELECT child_start_time INTO v_last_partition_timestamp
             FROM @extschema@.show_partition_info(v_parent_schema||'.'||v_last_partition, v_row.partition_interval, v_row.parent_table);
 
+        -- Do not create child tables if they would be dropped by retention anyway. Edge case where maintenance was missed for
+        --  an extended period of time
         IF v_row.retention IS NOT NULL THEN
             v_last_partition_timestamp := greatest(v_last_partition_timestamp, CURRENT_TIMESTAMP - v_row.retention::interval);
+            -- Need to properly truncate the interval and account for custom date truncation
+            SELECT base_timestamp
+            INTO v_last_partition_timestamp
+            FROM @extschema@.calculate_time_partition_info(v_row.partition_interval::interval, v_last_partition_timestamp, v_row.date_trunc_interval);
         END IF;
 
         -- Must be reset to null otherwise if the next partition set in the loop is empty, the previous partition set's value could be used
@@ -260,8 +267,8 @@ LOOP
                 v_drop_count := v_drop_count + @extschema@.drop_partition_time(v_row.parent_table);
             END IF;
 
-            UPDATE @extschema@.part_config SET maintenance_last_run = clock_timestamp() WHERE parent_table = v_row.parent_table;
             -- Nothing else to do
+            UPDATE @extschema@.part_config SET maintenance_last_run = clock_timestamp() WHERE parent_table = v_row.parent_table;
             CONTINUE;
         END IF;
         RAISE DEBUG 'run_maint: v_child_timestamp: %, v_current_partition_timestamp: %, v_max_time_default: %', v_child_timestamp, v_current_partition_timestamp, v_max_time_default;
@@ -359,7 +366,14 @@ LOOP
         END IF;
         RAISE DEBUG 'run_maint: v_max_id: %, v_current_partition_id: %, v_max_id_default: %', v_max_id, v_current_partition_id, v_max_id_default;
         IF v_current_partition_id IS NULL AND v_max_id_default IS NULL THEN
-            -- Partition set is completely empty. Nothing to do
+            -- Partition set is completely empty.
+
+            -- Still need to run retention if needed. Note similar call below for non-empty sets. Keep in sync.
+            IF v_row.retention IS NOT NULL THEN
+                v_drop_count := v_drop_count + @extschema@.drop_partition_id(v_row.parent_table);
+            END IF;
+
+            -- Nothing else to do
             UPDATE @extschema@.part_config SET maintenance_last_run = clock_timestamp() WHERE parent_table = v_row.parent_table;
             CONTINUE;
         END IF;
@@ -402,7 +416,7 @@ LOOP
             v_premade_count := ((v_next_partition_id - v_current_partition_id) / v_row.partition_interval::bigint);
         END LOOP;
 
-        -- Run retention if needed
+        -- Run retention if needed. Note similar call above when partition set is empty. Keep in sync.
         IF v_row.retention IS NOT NULL THEN
             v_drop_count := v_drop_count + @extschema@.drop_partition_id(v_row.parent_table);
         END IF;
