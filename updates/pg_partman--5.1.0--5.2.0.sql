@@ -3,14 +3,14 @@
 CREATE TEMP TABLE partman_preserve_privs_temp (statement text);
 
 INSERT INTO partman_preserve_privs_temp
-SELECT 'GRANT EXECUTE ON FUNCTION @extschema@.create_parent(text, text, text, text, text, int, text, boolean, text, text[], text, boolean, text, boolean) TO '||array_to_string(array_agg('"'||grantee::text||'"'), ',')||';'
+SELECT 'GRANT EXECUTE ON FUNCTION @extschema@.create_parent(text, text, text, text, text, int, text, boolean, text, text[], text, boolean, text, boolean, text, text) TO '||array_to_string(array_agg('"'||grantee::text||'"'), ',')||';'
 FROM information_schema.routine_privileges
 WHERE routine_schema = '@extschema@'
 AND routine_name = 'create_parent'
 AND grantee != 'PUBLIC';
 
 INSERT INTO partman_preserve_privs_temp
-SELECT 'GRANT EXECUTE ON FUNCTION @extschema@.create_sub_parent(text, text, text, text, boolean, text, text[], int, text, text, boolean, text, boolean) TO '||array_to_string(array_agg('"'||grantee::text||'"'), ',')||';'
+SELECT 'GRANT EXECUTE ON FUNCTION @extschema@. TO '||array_to_string(array_agg('"'||grantee::text||'"'), ',')||';'
 FROM information_schema.routine_privileges
 WHERE routine_schema = '@extschema@'
 AND routine_name = 'create_sub_parent'
@@ -354,6 +354,8 @@ v_child_schema          text;
 v_child_tablename       text;
 v_control               text;
 v_control_type          text;
+v_time_encoder          text;
+v_time_decoder          text;
 v_epoch                 text;
 v_exact_control_type    text;
 v_parent_table          text;
@@ -367,6 +369,11 @@ BEGIN
  * Passing the parent table argument slightly improves performance by avoiding a catalog lookup.
  * Passing an interval lets you set one different than the default configured one if desired.
  */
+
+SELECT time_encoder, time_decoder
+INTO v_time_encoder, v_time_decoder
+FROM @extschema@.part_config
+WHERE parent_table = p_parent_table;
 
 SELECT n.nspname, c.relname INTO v_child_schema, v_child_tablename
 FROM pg_catalog.pg_class c
@@ -440,10 +447,12 @@ ELSE
     RAISE EXCEPTION 'partman functions only work with list partitioning with integers and ranged partitioning with time or integers. Found partition strategy "%" for given partition set', v_partstrat;
 END IF;
 
-IF v_control_type = 'time' OR (v_control_type = 'id' AND v_epoch <> 'none') THEN
+IF v_control_type IN ('time', 'text', 'uuid') OR (v_control_type = 'id' AND v_epoch <> 'none') THEN
 
     IF v_control_type = 'time' THEN
         child_start_time := v_start_string::timestamptz;
+    ELSIF v_control_type IN ('text', 'uuid') THEN
+        EXECUTE format('SELECT %s(%s)', v_time_decoder, v_start_string) INTO child_start_time;
     ELSIF (v_control_type = 'id' AND v_epoch <> 'none') THEN
         -- bigint data type is stored as a single-quoted string in the partition expression. Must strip quotes for valid type-cast.
         v_start_string := trim(BOTH '''' FROM v_start_string);
@@ -500,6 +509,7 @@ CREATE OR REPLACE FUNCTION @extschema@.show_partitions (
 DECLARE
 
 v_control               text;
+v_time_decoder          text;
 v_control_type          text;
 v_exact_control_type    text;
 v_datetime_string       text;
@@ -525,10 +535,12 @@ END IF;
 SELECT partition_type
     , datetime_string
     , control
+    , time_decoder
     , epoch
 INTO v_partition_type
     , v_datetime_string
     , v_control
+    , v_time_decoder
     , v_epoch
 FROM @extschema@.part_config
 WHERE parent_table = p_parent_table;
@@ -565,6 +577,7 @@ v_sql := format('SELECT n.nspname::text AS partition_schemaname
     , v_parent_schema
     , v_parent_tablename);
 
+
 IF p_include_default THEN
     -- Return the default partition immediately as first item in list
     v_default_sql := v_sql || format('
@@ -576,11 +589,17 @@ END IF;
 v_sql := v_sql || format('
     AND pg_get_expr(relpartbound, c.oid) != ''DEFAULT'' ');
 
-
 IF v_control_type = 'time' THEN
 
     v_sql := v_sql || format('
         ORDER BY (regexp_match(pg_get_expr(c.relpartbound, c.oid, true), $REGEX$\(([^)]+)\) TO \(([^)]+)\)$REGEX$))[1]::text::timestamptz %s '
+        , p_order);
+
+ELSIF v_control_type IN ('text', 'uuid') THEN
+
+    v_sql := v_sql || format('
+        ORDER BY %s((regexp_match(pg_get_expr(c.relpartbound, c.oid, true), $REGEX$\(''([^)]+)''\) TO \(''([^)]+)''\)$REGEX$))[1]) %s '
+        , v_time_decoder
         , p_order);
 
 ELSIF v_control_type = 'id' AND v_epoch <> 'none' THEN
@@ -658,6 +677,8 @@ v_child_table                   text;
 v_column_list                   text;
 v_control                       text;
 v_control_type                  text;
+v_time_encoder                  text;
+v_time_decoder                  text;
 v_child_min_id                  bigint;
 v_child_min_time                timestamptz;
 v_epoch                         text;
@@ -708,11 +729,15 @@ END IF;
 
 SELECT partition_interval::text
     , control
+    , time_encoder
+    , time_decoder
     , jobmon
     , epoch
     , template_table
 INTO v_partition_interval
     , v_control
+    , v_time_encoder
+    , v_time_decoder
     , v_jobmon
     , v_epoch
     , v_template_table
@@ -739,7 +764,7 @@ IF v_parent_tablename IS NULL THEN
 END IF;
 
 SELECT general_type INTO v_control_type FROM @extschema@.check_control_type(v_parent_schema, v_parent_tablename, v_control);
-IF v_control_type = 'time' OR (v_control_type = 'id' AND v_epoch <> 'none') THEN
+IF v_control_type IN ('time', 'text', 'uuid') OR (v_control_type = 'id' AND v_epoch <> 'none') THEN
     IF p_batch_interval IS NULL THEN
         v_batch_interval_time := v_partition_interval::interval;
     ELSE
@@ -848,6 +873,9 @@ LOOP
 
     IF v_control_type = 'time' OR (v_control_type = 'id' AND v_epoch <> 'none') THEN
         EXECUTE format('SELECT min(%s) FROM %I.%I', v_partition_expression, v_parent_schema, v_child_table) INTO v_child_min_time;
+    ELSIF (v_control_type IN ('text', 'uuid')) THEN
+        --- This can pass NULL to decoder function
+        EXECUTE format('SELECT %s((SELECT min(%s::text) FROM %I.%I))', v_time_decoder, v_partition_expression, v_parent_schema, v_child_table) INTO v_child_min_time;
     ELSIF v_control_type = 'id' THEN
         EXECUTE format('SELECT min(%s) FROM %I.%I', v_partition_expression, v_parent_schema, v_child_table) INTO v_child_min_id;
     END IF;
@@ -908,18 +936,27 @@ LOOP
     v_child_loop_total := 0;
     <<inner_child_loop>>
     LOOP
-        IF v_control_type = 'time' OR (v_control_type = 'id' AND v_epoch <> 'none') THEN
+        IF v_control_type IN ('time', 'text', 'uuid') OR (v_control_type = 'id' AND v_epoch <> 'none') THEN
             -- do some locking with timeout, if required
             IF p_lock_wait > 0  THEN
                 v_lock_iter := 0;
                 WHILE v_lock_iter <= 5 LOOP
                     v_lock_iter := v_lock_iter + 1;
                     BEGIN
-                        EXECUTE format('SELECT * FROM %I.%I WHERE %I <= %L FOR UPDATE NOWAIT'
-                            , v_parent_schema
-                            , v_child_table
-                            , v_control
-                            , v_child_min_time + (v_batch_interval_time * v_inner_loop_count));
+                        IF v_control_type = 'time' OR (v_control_type = 'id' AND v_epoch <> 'none') THEN
+                            EXECUTE format('SELECT * FROM %I.%I WHERE %I <= %L FOR UPDATE NOWAIT'
+                                , v_parent_schema
+                                , v_child_table
+                                , v_control
+                                , v_child_min_time + (v_batch_interval_time * v_inner_loop_count));
+                        ELSIF (v_control_type IN ('text', 'uuid')) THEN
+                            EXECUTE format('SELECT * FROM %I.%I WHERE %I <= %s(%L) FOR UPDATE NOWAIT'
+                                , v_parent_schema
+                                , v_child_table
+                                , v_control
+                                , v_time_encoder
+                                , v_child_min_time + (v_batch_interval_time * v_inner_loop_count));
+                        END IF;
                        v_lock_obtained := TRUE;
                     EXCEPTION
                         WHEN lock_not_available THEN
@@ -936,16 +973,31 @@ LOOP
             END IF;
 
             -- Get everything from the current child minimum up to the multiples of the given interval
-            EXECUTE format('WITH move_data AS (
-                                    DELETE FROM %I.%I WHERE %s <= %L RETURNING %s )
-                                  INSERT INTO %I.%I (%5$s) SELECT %5$s FROM move_data'
-                , v_parent_schema
-                , v_child_table
-                , v_partition_expression
-                , v_child_min_time + (v_batch_interval_time * v_inner_loop_count)
-                , v_column_list
-                , v_target_schema
-                , v_target_tablename);
+            IF v_control_type = 'time' OR (v_control_type = 'id' AND v_epoch <> 'none') THEN
+                EXECUTE format('WITH move_data AS (
+                                        DELETE FROM %I.%I WHERE %s <= %L RETURNING %s )
+                                    INSERT INTO %I.%I (%5$s) SELECT %5$s FROM move_data'
+                    , v_parent_schema
+                    , v_child_table
+                    , v_partition_expression
+                    , v_child_min_time + (v_batch_interval_time * v_inner_loop_count)
+                    , v_column_list
+                    , v_target_schema
+                    , v_target_tablename);
+            ELSIF (v_control_type IN ('text', 'uuid')) THEN
+                EXECUTE format('WITH move_data AS (
+                                        DELETE FROM %I.%I WHERE %s <= %s(%L) RETURNING %s )
+                                    INSERT INTO %I.%I (%6$s) SELECT %6$s FROM move_data'
+                    , v_parent_schema
+                    , v_child_table
+                    , v_partition_expression
+                    , v_time_encoder
+                    , v_child_min_time + (v_batch_interval_time * v_inner_loop_count)
+                    , v_column_list
+                    , v_target_schema
+                    , v_target_tablename);
+            END IF;
+
             GET DIAGNOSTICS v_rowcount = ROW_COUNT;
             v_total := v_total + v_rowcount;
             v_child_loop_total := v_child_loop_total + v_rowcount;
@@ -957,7 +1009,13 @@ LOOP
             v_batch_loop_count := v_batch_loop_count + 1;
 
             -- Check again if table is empty and go to outer loop again to drop it if so
-            EXECUTE format('SELECT min(%s) FROM %I.%I', v_partition_expression, v_parent_schema, v_child_table) INTO v_child_min_time;
+
+            IF v_control_type = 'time' OR (v_control_type = 'id' AND v_epoch <> 'none') THEN
+                EXECUTE format('SELECT min(%s) FROM %I.%I', v_partition_expression, v_parent_schema, v_child_table) INTO v_child_min_time;
+            ELSIF (v_control_type IN ('text', 'uuid')) THEN
+                EXECUTE format('SELECT %s((SELECT min(%s::text) FROM %I.%I))', v_time_decoder, v_partition_expression, v_parent_schema, v_child_table) INTO v_child_min_time;
+            END IF;
+
             CONTINUE outer_child_loop WHEN v_child_min_time IS NULL;
 
         ELSIF v_control_type = 'id' THEN
@@ -1104,6 +1162,8 @@ v_analyze                       boolean := FALSE;
 v_check_subpart                 int;
 v_child_timestamp               timestamptz;
 v_control_type                  text;
+v_time_encoder                  text;
+v_time_decoder                  text;
 v_create_count                  int := 0;
 v_current_partition_id          bigint;
 v_current_partition_timestamp   timestamptz;
@@ -1219,7 +1279,7 @@ LOOP
     -- When sub-partitioning, retention may drop tables that were already put into the query loop values.
     -- Check if they still exist in part_config before continuing
     v_parent_exists := NULL;
-    SELECT parent_table INTO v_parent_exists FROM @extschema@.part_config WHERE parent_table = v_row.parent_table;
+    SELECT parent_table, time_encoder, time_decoder INTO v_parent_exists, v_time_encoder, v_time_decoder FROM @extschema@.part_config WHERE parent_table = v_row.parent_table;
     IF v_parent_exists IS NULL THEN
         RAISE DEBUG 'run_maint: Parent table possibly removed from part_config by retenion';
     END IF;
@@ -1284,7 +1344,7 @@ LOOP
     SELECT partition_tablename INTO v_last_partition FROM @extschema@.show_partitions(v_row.parent_table, 'DESC') LIMIT 1;
     RAISE DEBUG 'run_maint: parent_table: %, v_last_partition: %', v_row.parent_table, v_last_partition;
 
-    IF v_control_type = 'time' OR (v_control_type = 'id' AND v_row.epoch <> 'none') THEN
+    IF v_control_type = 'time' OR (v_control_type = 'id' AND v_row.epoch <> 'none') OR (v_control_type IN ('text', 'uuid')) THEN
 
         IF v_row.sub_partition_set_full THEN
             UPDATE @extschema@.part_config SET maintenance_last_run = clock_timestamp() WHERE parent_table = v_row.parent_table;
@@ -1312,11 +1372,21 @@ LOOP
         FOR v_row_max_time IN
             SELECT partition_schemaname, partition_tablename FROM @extschema@.show_partitions(v_row.parent_table, 'DESC', false)
         LOOP
-            EXECUTE format('SELECT %s::text FROM %I.%I LIMIT 1'
-                                , v_partition_expression
-                                , v_row_max_time.partition_schemaname
-                                , v_row_max_time.partition_tablename
-                            ) INTO v_child_timestamp;
+
+            IF v_control_type = 'time' OR (v_control_type = 'id' AND v_row.epoch <> 'none') THEN
+                EXECUTE format('SELECT %s::text FROM %I.%I LIMIT 1'
+                                    , v_partition_expression
+                                    , v_row_max_time.partition_schemaname
+                                    , v_row_max_time.partition_tablename
+                                ) INTO v_child_timestamp;
+            ELSIF v_control_type IN ('text', 'uuid') THEN
+                EXECUTE format('SELECT %s(%s::text) FROM %I.%I LIMIT 1'
+                                    , v_time_decoder
+                                    , v_partition_expression
+                                    , v_row_max_time.partition_schemaname
+                                    , v_row_max_time.partition_tablename
+                                ) INTO v_child_timestamp;
+            END IF;
 
             IF v_row.infinite_time_partitions AND v_child_timestamp < CURRENT_TIMESTAMP THEN
                 -- No new data has been inserted relative to "now", but keep making child tables anyway
@@ -1827,6 +1897,8 @@ CREATE FUNCTION @extschema@.create_parent(
     , p_jobmon boolean DEFAULT true
     , p_date_trunc_interval text DEFAULT NULL
     , p_control_not_null boolean DEFAULT true
+    , p_time_encoder text DEFAULT NULL
+    , p_time_decoder text DEFAULT NULL
 )
     RETURNS boolean
     LANGUAGE plpgsql
@@ -1990,8 +2062,12 @@ IF p_control <> v_part_col OR v_control_exact_type <> v_part_type THEN
 END IF;
 
 -- Check that control column is a usable type for pg_partman.
-IF v_control_type NOT IN ('time', 'id') THEN
-    RAISE EXCEPTION 'Only date/time or integer types are allowed for the control column.';
+IF v_control_type NOT IN ('time', 'id', 'text', 'uuid') THEN
+    RAISE EXCEPTION 'Only date/time, text/uuid or integer types are allowed for the control column.';
+ELSIF v_control_type IN ('text', 'uuid') AND (p_time_encoder IS NULL OR p_time_decoder IS NULL) THEN
+    RAISE EXCEPTION 'p_time_encoder and p_time_decoder needs to be set for text/uuid type control column.';
+ELSIF v_control_type NOT IN ('text', 'uuid') AND (p_time_encoder IS NOT NULL OR p_time_decoder IS NOT NULL) THEN
+    RAISE EXCEPTION 'p_time_encoder and p_time_decoder can only be used with text/uuid type control column.';
 END IF;
 
 -- Table to handle properties not managed by core PostgreSQL yet
@@ -2140,7 +2216,7 @@ LOOP
     v_inherit_privileges = v_row.sub_inherit_privileges;
 END LOOP;
 
-IF v_control_type = 'time' OR (v_control_type = 'id' AND p_epoch <> 'none') THEN
+IF v_control_type IN ('time', 'text', 'uuid') OR (v_control_type = 'id' AND p_epoch <> 'none') THEN
 
     v_time_interval := p_interval::interval;
     IF v_time_interval < '1 second'::interval THEN
@@ -2157,6 +2233,7 @@ IF v_control_type = 'time' OR (v_control_type = 'id' AND p_epoch <> 'none') THEN
     RAISE DEBUG 'create_parent(): parent_table: %, v_base_timestamp: %', p_parent_table, v_base_timestamp;
 
     v_partition_time_array := array_append(v_partition_time_array, v_base_timestamp);
+
     LOOP
         -- If current loop value is less than or equal to the value of the max premake, add time to array.
         IF (v_base_timestamp + (v_time_interval * v_count)) < (CURRENT_TIMESTAMP + (v_time_interval * p_premake)) THEN
@@ -2183,6 +2260,8 @@ IF v_control_type = 'time' OR (v_control_type = 'id' AND p_epoch <> 'none') THEN
         , epoch
         , control
         , premake
+        , time_encoder
+        , time_decoder
         , constraint_cols
         , datetime_string
         , automatic_maintenance
@@ -2197,6 +2276,8 @@ IF v_control_type = 'time' OR (v_control_type = 'id' AND p_epoch <> 'none') THEN
         , p_epoch
         , p_control
         , p_premake
+        , p_time_encoder
+        , p_time_decoder
         , p_constraint_cols
         , v_datetime_string
         , p_automatic_maintenance
@@ -2496,31 +2577,33 @@ CREATE FUNCTION @extschema@.create_sub_parent(
     , p_jobmon boolean DEFAULT true
     , p_date_trunc_interval text DEFAULT NULL
     , p_control_not_null boolean DEFAULT true
+    , p_time_encoder text DEFAULT NULL
+    , p_time_decoder text DEFAULT NULL
 )
     RETURNS boolean
     LANGUAGE plpgsql
     AS $$
 DECLARE
 
-v_child_interval        interval;
-v_child_start_id        bigint;
-v_child_start_time      timestamptz;
-v_control               text;
-v_control_parent_type   text;
-v_control_sub_type      text;
-v_parent_epoch          text;
-v_parent_interval       text;
-v_parent_schema         text;
-v_parent_tablename      text;
-v_part_col              text;
-v_partition_id_array    bigint[];
-v_partition_time_array  timestamptz[];
-v_relkind               char;
-v_recreate_child        boolean := false;
-v_row                   record;
-v_sql                   text;
-v_success               boolean := false;
-v_template_table        text;
+v_child_interval         interval;
+v_child_start_id         bigint;
+v_child_start_time       timestamptz;
+v_control                text;
+v_control_parent_type    text;
+v_control_sub_type       text;
+v_parent_epoch           text;
+v_parent_interval        text;
+v_parent_schema          text;
+v_parent_tablename       text;
+v_part_col               text;
+v_partition_id_array     bigint[];
+v_partition_time_array   timestamptz[];
+v_relkind                char;
+v_recreate_child         boolean := false;
+v_row                    record;
+v_sql                    text;
+v_success                boolean := false;
+v_template_table         text;
 
 BEGIN
 /*
@@ -2543,7 +2626,7 @@ IF NOT @extschema@.check_partition_type(p_type) THEN
     RAISE EXCEPTION '% is not a valid partitioning type', p_type;
 END IF;
 
-SELECT partition_interval, control, epoch, template_table
+SELECT partition_interval, control, epoch, template_table, time_encoder
 INTO v_parent_interval, v_control, v_parent_epoch, v_template_table
 FROM @extschema@.part_config
 WHERE parent_table = p_top_parent;
@@ -2562,6 +2645,8 @@ SELECT general_type INTO v_control_parent_type FROM @extschema@.check_control_ty
 INSERT INTO @extschema@.part_config_sub (
     sub_parent
     , sub_control
+    , sub_time_encoder
+    , sub_time_decoder
     , sub_partition_interval
     , sub_partition_type
     , sub_default_table
@@ -2576,6 +2661,8 @@ INSERT INTO @extschema@.part_config_sub (
 VALUES (
     p_top_parent
     , p_control
+    , p_time_encoder
+    , p_time_decoder
     , p_interval
     , p_type
     , p_default_table
@@ -2601,8 +2688,9 @@ LOOP
     WHERE n.nspname = v_row.child_schema
     AND c.relname = v_row.child_tablename;
 
+
     -- If both parent and sub-parent are the same partition type (time/id), ensure intereval of sub-parent is less than parent
-    IF (v_control_parent_type = 'time' AND v_control_sub_type = 'time') OR
+    IF (v_control_parent_type IN ('time', 'text', 'uuid') AND v_control_sub_type = 'time') OR
        (v_control_parent_type = 'id' AND v_parent_epoch <> 'none' AND v_control_sub_type = 'id' AND p_epoch <> 'none') THEN
 
         v_child_interval := p_interval::interval;
@@ -2667,6 +2755,8 @@ IF v_recreate_child = false THEN
         v_sql := format('SELECT @extschema@.create_parent(
                  p_parent_table := %L
                 , p_control := %L
+                , p_time_encoder := %L
+                , p_time_decoder := %L
                 , p_interval := %L
                 , p_type := %L
                 , p_default_table := %L
@@ -2678,9 +2768,12 @@ IF v_recreate_child = false THEN
                 , p_template_table := %L
                 , p_jobmon := %L
                 , p_date_trunc_interval := %L
-                , p_control_not_null := %L)'
+                , p_control_not_null := %L
+                )'
             , v_row.child_schema||'.'||v_row.child_tablename
             , p_control
+            , p_time_encoder
+            , p_time_decoder
             , p_interval
             , p_type
             , p_default_table
@@ -2898,6 +2991,8 @@ FOREACH v_id IN ARRAY p_partition_ids LOOP
         SELECT
             sub_parent
             , sub_control
+            , sub_time_encoder
+            , sub_time_decoder
             , sub_partition_interval
             , sub_partition_type
             , sub_premake
@@ -2929,6 +3024,8 @@ FOREACH v_id IN ARRAY p_partition_ids LOOP
         v_sql := format('SELECT @extschema@.create_parent(
                  p_parent_table := %L
                 , p_control := %L
+                , p_time_encoder := %L
+                , p_time_decoder := %L
                 , p_type := %L
                 , p_interval := %L
                 , p_default_table := %L
@@ -2943,6 +3040,8 @@ FOREACH v_id IN ARRAY p_partition_ids LOOP
                 , p_control_not_null := %L )'
             , v_parent_schema||'.'||v_partition_name
             , v_row.sub_control
+            , v_row.sub_time_encoder
+            , v_row.sub_time_decoder
             , v_row.sub_partition_type
             , v_row.sub_partition_interval
             , v_row.sub_default_table
@@ -3039,6 +3138,7 @@ ex_hint                         text;
 ex_message                      text;
 v_control                       text;
 v_control_type                  text;
+v_time_encoder                  text;
 v_datetime_string               text;
 v_epoch                         text;
 v_exists                        smallint;
@@ -3069,6 +3169,8 @@ v_sub_timestamp_max             timestamptz;
 v_sub_timestamp_min             timestamptz;
 v_template_table                text;
 v_time                          timestamptz;
+v_partition_text_start          text;
+v_partition_text_end            text;
 
 BEGIN
 /*
@@ -3076,6 +3178,7 @@ BEGIN
  */
 
 SELECT control
+    , time_encoder
     , partition_interval::interval -- this shared field also used in partition_id as bigint
     , epoch
     , jobmon
@@ -3083,6 +3186,7 @@ SELECT control
     , template_table
     , inherit_privileges
 INTO v_control
+    , v_time_encoder
     , v_partition_interval
     , v_epoch
     , v_jobmon
@@ -3112,8 +3216,8 @@ AND c.relname = split_part(p_parent_table, '.', 2)::name;
 
 SELECT general_type INTO v_control_type FROM @extschema@.check_control_type(v_parent_schema, v_parent_tablename, v_control);
 IF v_control_type <> 'time' THEN
-    IF (v_control_type = 'id' AND v_epoch = 'none') OR v_control_type <> 'id' THEN
-        RAISE EXCEPTION 'Cannot run on partition set without time based control column or epoch flag set with an id column. Found control: %, epoch: %', v_control_type, v_epoch;
+    IF (v_control_type = 'id' AND v_epoch = 'none') OR v_control_type NOT IN ('text', 'id', 'uuid') OR (v_control_type IN ('text', 'uuid') AND v_time_encoder IS NULL) THEN
+        RAISE EXCEPTION 'Cannot run on partition set without time based control column, an epoch flag set with an id column or time_encoder set with text column. Found control: %, epoch: %, time_encoder: %s', v_control_type, v_epoch, v_time_encoder;
     END IF;
 END IF;
 
@@ -3237,13 +3341,27 @@ FOREACH v_time IN ARRAY p_partition_times LOOP
 
     IF v_epoch = 'none' THEN
         -- Attach with normal, time-based values for built-in constraint
-        EXECUTE format('ALTER TABLE %I.%I ATTACH PARTITION %I.%I FOR VALUES FROM (%L) TO (%L)'
-            , v_parent_schema
-            , v_parent_tablename
-            , v_parent_schema
-            , v_partition_name
-            , v_partition_timestamp_start
-            , v_partition_timestamp_end);
+        IF v_time_encoder IS NULL THEN
+            EXECUTE format('ALTER TABLE %I.%I ATTACH PARTITION %I.%I FOR VALUES FROM (%L) TO (%L)'
+                , v_parent_schema
+                , v_parent_tablename
+                , v_parent_schema
+                , v_partition_name
+                , v_partition_timestamp_start
+                , v_partition_timestamp_end);
+        ELSE
+            EXECUTE format('SELECT %s(%L)', v_time_encoder, v_partition_timestamp_start) INTO v_partition_text_start;
+            EXECUTE format('SELECT %s(%L)', v_time_encoder, v_partition_timestamp_end) INTO v_partition_text_end;
+
+            EXECUTE format('ALTER TABLE %I.%I ATTACH PARTITION %I.%I FOR VALUES FROM (%L) TO (%L)'
+                , v_parent_schema
+                , v_parent_tablename
+                , v_parent_schema
+                , v_partition_name
+                , v_partition_text_start
+                , v_partition_text_end);
+        END IF;
+
     ELSE
         -- Must attach with integer based values for built-in constraint and epoch
         IF v_epoch = 'seconds' THEN
@@ -3306,6 +3424,8 @@ FOREACH v_time IN ARRAY p_partition_times LOOP
         SELECT
             sub_parent
             , sub_control
+            , sub_time_encoder
+            , sub_time_decoder
             , sub_partition_interval
             , sub_partition_type
             , sub_premake
@@ -3337,6 +3457,8 @@ FOREACH v_time IN ARRAY p_partition_times LOOP
         v_sql := format('SELECT @extschema@.create_parent(
                  p_parent_table := %L
                 , p_control := %L
+                , p_time_encoder := %L
+                , p_time_decoder := %L
                 , p_interval := %L
                 , p_type := %L
                 , p_default_table := %L
@@ -3351,6 +3473,8 @@ FOREACH v_time IN ARRAY p_partition_times LOOP
                 , p_control_not_null := %L )'
             , v_parent_schema||'.'||v_partition_name
             , v_row.sub_control
+            , v_row.sub_time_encoder
+            , v_row.sub_time_decoder
             , v_row.sub_partition_interval
             , v_row.sub_partition_type
             , v_row.sub_default_table
@@ -4126,9 +4250,47 @@ END LOOP;
 
 EXECUTE format('ANALYZE %I.%I', v_parent_schema, v_parent_tablename);
 
+
+CREATE FUNCTION @extschema@.uuid7_time_encoder(ts TIMESTAMPTZ)
+RETURNS UUID
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    ts_millis BIGINT;
+    ts_hex TEXT;
+BEGIN
+    -- Convert the milliseconds to a 12 char hex with zero pad
+    ts_millis := EXTRACT(EPOCH FROM ts) * 1000;
+    ts_hex := lpad(to_hex(ts_millis), 12, '0');
+
+    -- Split the timestamp into two parts as per spec
+    RETURN substr(ts_hex, 1, 8) || '-' || substr(ts_hex, 9, 4) || '-0000-0000-000000000000';
+END;
+$$;
+
+
+CREATE FUNCTION @extschema@.uuid7_time_decoder(uuidv7 TEXT)
+RETURNS TIMESTAMPTZ
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    ts_hex TEXT;
+    ts_millis BIGINT;
+    extracted_ts TIMESTAMPTZ;
+BEGIN
+    -- Extract the first 12 characters of the UUID which represent the timestamp
+    ts_hex := substr(uuidv7::TEXT, 1, 8) || substr(uuidv7::TEXT, 10, 4);
+
+    -- Convert the hex timestamp to a BIGINT (milliseconds)
+    ts_millis := ('x' || ts_hex)::BIT(48)::BIGINT;
+
+    RETURN to_timestamp(ts_millis / 1000.0);
+END;
+$$;
 PERFORM pg_advisory_unlock(hashtext('pg_partman reapply_constraints'));
 END
 $$;
+
 
 -- Restore dropped object privileges
 DO $$
