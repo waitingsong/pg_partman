@@ -1,12 +1,31 @@
--- TODO - add test for PR#650 - not creating partitions that aren't being retained anyway
---      - add test to ensure sub partitioning preserves default table settings and not null enforcement
---      - add test for constraint exclusion with integer-based partitioning
+-- SEE CHANGELOG.md for all notes and details on this update
 
--- TODO PRESERVE PRIVILEGES
+CREATE TEMP TABLE partman_preserve_privs_temp (statement text);
+
+INSERT INTO partman_preserve_privs_temp
+SELECT 'GRANT EXECUTE ON FUNCTION @extschema@.create_parent(text, text, text, text, text, int, text, boolean, text, text[], text, boolean, text, boolean) TO '||array_to_string(array_agg('"'||grantee::text||'"'), ',')||';'
+FROM information_schema.routine_privileges
+WHERE routine_schema = '@extschema@'
+AND routine_name = 'create_parent'
+AND grantee != 'PUBLIC';
+
+INSERT INTO partman_preserve_privs_temp
+SELECT 'GRANT EXECUTE ON FUNCTION @extschema@.create_sub_parent(text, text, text, text, boolean, text, text[], int, text, text, boolean, text, boolean) TO '||array_to_string(array_agg('"'||grantee::text||'"'), ',')||';'
+FROM information_schema.routine_privileges
+WHERE routine_schema = '@extschema@'
+AND routine_name = 'create_sub_parent'
+AND grantee != 'PUBLIC';
+
+INSERT INTO partman_preserve_privs_temp
+SELECT 'GRANT EXECUTE ON FUNCTION @extschema@.check_subpart_sameconfig(text) TO '||array_to_string(array_agg('"'||grantee::text||'"'), ',')||';'
+FROM information_schema.routine_privileges
+WHERE routine_schema = '@extschema@'
+AND routine_name = 'check_subpart_sameconfig'
+AND grantee != 'PUBLIC';
+
 DROP FUNCTION @extschema@.create_parent(text, text, text, text, text, int, text, boolean, text, text[], text, boolean, text);
 DROP FUNCTION @extschema@.create_sub_parent(text, text, text, text, boolean, text, text[], int, text, text, boolean, text);
 DROP FUNCTION @extschema@.check_subpart_sameconfig(text);
-
 
 ALTER TABLE @extschema@.part_config DROP COLUMN default_table;
 ALTER TABLE @extschema@.part_config_sub ADD COLUMN sub_control_not_null boolean DEFAULT true;
@@ -3842,7 +3861,7 @@ IF p_child_table IS NULL THEN
         ELSE
             v_optimize_counter := v_optimize_counter + 1;
             IF v_optimize_counter > v_optimize_constraint THEN
-                v_child_tablename = v_row_max_value.partition_tablename;
+                v_child_tablename := v_row_max_value.partition_tablename;
                 EXIT;
             END IF;
         END IF;
@@ -4110,3 +4129,18 @@ EXECUTE format('ANALYZE %I.%I', v_parent_schema, v_parent_tablename);
 PERFORM pg_advisory_unlock(hashtext('pg_partman reapply_constraints'));
 END
 $$;
+
+-- Restore dropped object privileges
+DO $$
+DECLARE
+v_row   record;
+BEGIN
+    FOR v_row IN SELECT statement FROM partman_preserve_privs_temp LOOP
+        IF v_row.statement IS NOT NULL THEN
+            EXECUTE v_row.statement;
+        END IF;
+    END LOOP;
+END
+$$;
+
+DROP TABLE IF EXISTS partman_preserve_privs_temp;

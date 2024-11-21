@@ -131,7 +131,7 @@ IF p_child_table IS NULL THEN
         ELSE
             v_optimize_counter := v_optimize_counter + 1;
             IF v_optimize_counter > v_optimize_constraint THEN
-                v_child_tablename = v_row_max_value.partition_tablename;
+                v_child_tablename := v_row_max_value.partition_tablename;
                 EXIT;
             END IF;
         END IF;
