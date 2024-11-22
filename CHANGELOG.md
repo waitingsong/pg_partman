@@ -3,6 +3,7 @@
 =====
 NEW FEATURES
 ------------
+ - Add support for UUIDv7 and other custom encoded methods for time-based partitioning. Special thanks to akulapid on Github for the addition of this feature. (Github Issue #528)
  - Add support for microsecond precisions in epoch partitioning. (Github PR #659)
  - Improve partition maintenance performance when determining next partition to be created. (Github Issue #660)
  - Removed requirement for pg_partman to be installed as a superuser. See "superuser" parameter in control file documentation for more details - https://www.postgresql.org/docs/current/extend-extensions.html#EXTEND-EXTENSIONS-FILES
