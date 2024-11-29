@@ -4250,6 +4250,10 @@ END LOOP;
 
 EXECUTE format('ANALYZE %I.%I', v_parent_schema, v_parent_tablename);
 
+PERFORM pg_advisory_unlock(hashtext('pg_partman reapply_constraints'));
+END
+$$;
+
 
 CREATE FUNCTION @extschema@.uuid7_time_encoder(ts TIMESTAMPTZ)
 RETURNS UUID
@@ -4286,9 +4290,6 @@ BEGIN
 
     RETURN to_timestamp(ts_millis / 1000.0);
 END;
-$$;
-PERFORM pg_advisory_unlock(hashtext('pg_partman reapply_constraints'));
-END
 $$;
 
 
