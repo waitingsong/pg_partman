@@ -10,7 +10,7 @@ AND routine_name = 'create_parent'
 AND grantee != 'PUBLIC';
 
 INSERT INTO partman_preserve_privs_temp
-SELECT 'GRANT EXECUTE ON FUNCTION @extschema@. TO '||array_to_string(array_agg('"'||grantee::text||'"'), ',')||';'
+SELECT 'GRANT EXECUTE ON FUNCTION @extschema@.create_sub_parent(text, text, text, text, boolean, text, text[], int, text, text, boolean, text, boolean, text, text) TO '||array_to_string(array_agg('"'||grantee::text||'"'), ',')||';'
 FROM information_schema.routine_privileges
 WHERE routine_schema = '@extschema@'
 AND routine_name = 'create_sub_parent'
