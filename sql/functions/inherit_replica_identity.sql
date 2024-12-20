@@ -7,7 +7,7 @@ v_child_partition_index         text;
 v_child_partition_oid           oid;
 v_parent_oid                    oid;
 v_parent_replident              char;
-v_parent_replident_index        name;
+v_parent_replident_oid          oid;
 v_replident_string              text;
 v_sql                           text;
 
@@ -15,7 +15,11 @@ BEGIN
 
 /*
 * Set the given child table's replica identity to the same as the parent
- NOTE: Replication identity not automatically inherited as of PG16 (revisit in future versions)
+ NOTE: Replication identity not automatically inherited as of PG16 (revisit in future versions).
+ ANOTHER NOTE: Replica identity with USING INDEX only works with indexes that actually exist on the parent,
+    not indexes that are inherited from the template.  Since the replica identity could be defined on both
+    the template and the parent at the same time , there's no way to tell which one is the "right" one.
+    Using the parent table's replica identity index at least ensures the index inheritance relationship.
 */
 
 SELECT c.oid
@@ -29,8 +33,8 @@ AND c.relname = p_parent_tablename;
 
 IF v_parent_replident = 'i' THEN
 
-    SELECT c.relname
-    INTO v_parent_replident_index
+    SELECT c.oid
+    INTO v_parent_replident_oid
     FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_index i ON i.indexrelid = c.oid
     WHERE i.indrelid = v_parent_oid
@@ -43,18 +47,19 @@ IF v_parent_replident = 'i' THEN
     WHERE n.nspname = p_parent_schemaname
     AND c.relname = p_child_tablename;
 
-    SELECT partition_index.indexrelid::regclass::text
+    SELECT partition_index_name.relname
     INTO v_child_partition_index
-    FROM pg_index parent_index -- parent index
-    INNER JOIN pg_inherits index_inheritance ON (index_inheritance.inhparent=parent_index.indexrelid) -- parent partition index
-    INNER JOIN pg_index partition_index ON (index_inheritance.inhrelid=partition_index.indexrelid) -- connection between parent and partition indexes
-    INNER JOIN pg_class partition_table ON (partition_table.oid=partition_index.indrelid) -- connection between child table and child index
+    FROM pg_index parent_index
+    INNER JOIN pg_catalog.pg_inherits index_inheritance ON (index_inheritance.inhparent=parent_index.indexrelid) -- parent index inheritance
+    INNER JOIN pg_catalog.pg_index partition_index ON (index_inheritance.inhrelid=partition_index.indexrelid) -- connection between parent index and child index
+    INNER JOIN pg_catalog.pg_class partition_index_name ON (partition_index.indexrelid=partition_index_name.oid) -- get child index name
+    INNER JOIN pg_catalog.pg_class partition_table ON (partition_table.oid=partition_index.indrelid) -- connection between child table and child index
     WHERE partition_table.oid=v_child_partition_oid -- child partition table
-    AND parent_index.indexrelid=v_parent_replident_index::regclass; -- parent partition index
+    AND parent_index.indexrelid=v_parent_replident_oid; -- parent partition index
 
 END IF;
 
-RAISE DEBUG 'inherit_replica_ident: v_parent_oid: %, v_parent_replident: %,  v_parent_replident_index: %, v_child_partition_oid: %, v_child_partition_index: %', v_parent_oid, v_parent_replident,  v_parent_replident_index, v_child_partition_oid, v_child_partition_index;
+RAISE DEBUG 'inherit_replica_ident: v_parent_oid: %, v_parent_replident: %, v_parent_replident_oid: %, v_child_partition_oid: %, v_child_partition_index: %', v_parent_oid, v_parent_replident,  v_parent_replident_oid, v_child_partition_oid, v_child_partition_index;
 
 IF v_parent_replident != 'd' THEN
     CASE v_parent_replident
