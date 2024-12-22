@@ -39,6 +39,8 @@ v_source_tablename          text;
 v_rowcount                  bigint;
 v_start_control             timestamptz;
 v_total_rows                bigint := 0;
+v_has_identity_column       boolean;
+v_override_clause           text := '';
 
 BEGIN
 /*
@@ -237,6 +239,11 @@ FOR i IN 1..p_batch_count LOOP
     v_partition_suffix := to_char(v_min_partition_timestamp, v_datetime_string);
     v_current_partition_name := @extschema@.check_name_length(v_parent_tablename, v_partition_suffix, TRUE);
 
+    v_has_identity_column := table_has_identity_columns(v_parent_schema || '.' || v_parent_tablename, p_ignored_columns);
+    IF v_has_identity_column THEN
+        v_override_clause := 'OVERRIDING SYSTEM VALUE';
+    END IF;
+
     IF v_default_exists THEN
         -- Child tables cannot be created if data that belongs to it exists in the default
         -- Have to move data out to temporary location, create child table, then move it back
@@ -244,23 +251,25 @@ FOR i IN 1..p_batch_count LOOP
         -- Temp table created above to avoid excessive temp creation in loop
         EXECUTE format('WITH partition_data AS (
                 DELETE FROM %1$I.%2$I WHERE %3$s >= %4$L AND %3$s < %5$L RETURNING *)
-            INSERT INTO partman_temp_data_storage (%6$s) SELECT %6$s FROM partition_data'
+            INSERT INTO partman_temp_data_storage (%6$s) %7$s SELECT %6$s FROM partition_data'
             , v_source_schemaname
             , v_source_tablename
             , v_partition_expression
             , v_min_partition_timestamp
             , v_max_partition_timestamp
-            , v_column_list);
+            , v_column_list
+            , v_override_clause);  -- insert "OVERRIDING SYSTEM VALUE" or blank
 
         -- Set analyze to true if a table is created
         v_analyze := @extschema@.create_partition_time(p_parent_table, v_partition_timestamp);
 
         EXECUTE format('WITH partition_data AS (
                 DELETE FROM partman_temp_data_storage RETURNING *)
-            INSERT INTO %I.%I (%3$s) SELECT %3$s FROM partition_data'
+            INSERT INTO %I.%I (%3$s) %4$s SELECT %3$s FROM partition_data'
             , v_parent_schema
             , v_current_partition_name
-            , v_column_list);
+            , v_column_list
+            , v_override_clause);  -- insert "OVERRIDING SYSTEM VALUE" or blank
 
     ELSE
 
@@ -269,7 +278,7 @@ FOR i IN 1..p_batch_count LOOP
 
         EXECUTE format('WITH partition_data AS (
                             DELETE FROM ONLY %I.%I WHERE %s >= %L AND %3$s < %5$L RETURNING *)
-                         INSERT INTO %6$I.%7$I (%8$s) SELECT %8$s FROM partition_data'
+                         INSERT INTO %6$I.%7$I (%8$s) %9$s SELECT %8$s FROM partition_data'
                             , v_source_schemaname
                             , v_source_tablename
                             , v_partition_expression
@@ -277,7 +286,8 @@ FOR i IN 1..p_batch_count LOOP
                             , v_max_partition_timestamp
                             , v_parent_schema
                             , v_current_partition_name
-                            , v_column_list);
+                            , v_column_list
+                            , v_override_clause);  -- insert "OVERRIDING SYSTEM VALUE" or blank
     END IF;
 
     GET DIAGNOSTICS v_rowcount = ROW_COUNT;

@@ -36,6 +36,8 @@ v_source_tablename          text;
 v_sql                       text;
 v_start_control             bigint;
 v_total_rows                bigint := 0;
+v_has_identity_column       boolean;
+v_override_clause           text := '';
 
 BEGIN
     /*
@@ -193,6 +195,11 @@ END IF;
 
 v_current_partition_name := @extschema@.check_name_length(COALESCE(v_parent_tablename), v_min_partition_id::text, TRUE);
 
+v_has_identity_column := table_has_identity_columns(v_parent_schema || '.' || v_parent_tablename, p_ignored_columns);
+IF v_has_identity_column THEN
+    v_override_clause := 'OVERRIDING SYSTEM VALUE';
+END IF;
+
 IF v_default_exists THEN
 
     -- Child tables cannot be created if data that belongs to it exists in the default
@@ -201,23 +208,25 @@ IF v_default_exists THEN
     -- Temp table created above to avoid excessive temp creation in loop
     EXECUTE format('WITH partition_data AS (
             DELETE FROM %1$I.%2$I WHERE %3$I >= %4$s AND %3$I < %5$s RETURNING *)
-        INSERT INTO partman_temp_data_storage (%6$s) SELECT %6$s FROM partition_data'
+        INSERT INTO partman_temp_data_storage (%6$s) %7$s SELECT %6$s FROM partition_data'
         , v_source_schemaname
         , v_source_tablename
         , v_control
         , v_min_partition_id
         , v_max_partition_id
-        , v_column_list);
+        , v_column_list
+        , v_override_clause);  -- insert "OVERRIDING SYSTEM VALUE" or blank
 
     -- Set analyze to true if a table is created
     v_analyze := @extschema@.create_partition_id(p_parent_table, v_partition_id);
 
     EXECUTE format('WITH partition_data AS (
             DELETE FROM partman_temp_data_storage RETURNING *)
-        INSERT INTO %1$I.%2$I (%3$s) SELECT %3$s FROM partition_data'
+        INSERT INTO %1$I.%2$I (%3$s) %4$s SELECT %3$s FROM partition_data'
         , v_parent_schema
         , v_current_partition_name
-        , v_column_list);
+        , v_column_list
+        , v_override_clause);  -- insert "OVERRIDING SYSTEM VALUE" or blank
 
 ELSE
 
@@ -226,7 +235,7 @@ ELSE
 
     EXECUTE format('WITH partition_data AS (
             DELETE FROM ONLY %1$I.%2$I WHERE %3$I >= %4$s AND %3$I < %5$s RETURNING *)
-        INSERT INTO %6$I.%7$I (%8$s) SELECT %8$s FROM partition_data'
+        INSERT INTO %6$I.%7$I (%8$s) %9$s SELECT %8$s FROM partition_data'
         , v_source_schemaname
         , v_source_tablename
         , v_control
@@ -234,7 +243,8 @@ ELSE
         , v_max_partition_id
         , v_parent_schema
         , v_current_partition_name
-        , v_column_list);
+        , v_column_list
+        , v_override_clause);  -- insert "OVERRIDING SYSTEM VALUE" or blank
 
 END IF;
 
